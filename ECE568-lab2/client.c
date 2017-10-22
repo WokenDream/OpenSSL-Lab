@@ -7,6 +7,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include "common.h"
 
 #define HOST "localhost"
 #define PORT 8765
@@ -19,6 +20,21 @@
 #define FMT_EMAIL_MISMATCH "ECE568-CLIENT: Server Email doesn't match\n"
 #define FMT_NO_VERIFY "ECE568-CLIENT: Certificate does not verify\n"
 #define FMT_INCORRECT_CLOSE "ECE568-CLIENT: Premature close\n"
+
+
+// my macros
+#define CERTIFICATE_FILE "alice.pem"
+#define PASS "password"
+#define CIPHER_LIST "SHA1"
+
+#define SUCCESS 0
+#define FAIL 1
+#define BUF_LEN 256
+#define COMMON_NAME "Bob’s Server"
+#define EMAIL "ece568bob@ecf.utoronto.ca"
+
+void exit_on_error(int sock, SSL_CTX* ctx);
+int check_cert(SSL* ssl);
 
 int main(int argc, char **argv)
 {
@@ -70,6 +86,23 @@ int main(int argc, char **argv)
   if(connect(sock,(struct sockaddr *)&addr, sizeof(addr))<0)
     perror("connect");
   
+  SSL_CTX* ctx = initialize_ctx(CERTIFICATE_FILE, PASS);
+  SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
+  SSL_CTX_set_cipher_list(ctx, CIPHER_LIST);
+
+  SSL* ssl = SSL_new(ctx);
+  BIO* sbio = BIO_new_socket(sock, BIO_NOCLOSE);
+  SSL_set_bio(ssl,sbio,sbio);
+  
+  if(SSL_connect(ssl)<=0) {
+      printf(FMT_CONNECT_ERR);
+      ERR_print_errors(bio_err);
+      exit_on_error(sock, ctx);
+  }
+  if(check_cert(ssl) != SUCCESS) {
+    exit_on_error(sock, ctx);
+  }
+
   send(sock, secret, strlen(secret),0);
   len = recv(sock, &buf, 255, 0);
   buf[len]='\0';
@@ -79,4 +112,57 @@ int main(int argc, char **argv)
   
   close(sock);
   return 1;
+}
+
+void exit_on_error(int sock, SSL_CTX* ctx) {
+  destroy_ctx(ctx);
+  close(sock);
+  exit(1);
+}
+
+int check_cert(SSL* ssl) {
+  X509* server_cert = SSL_get_peer_certificate(ssl);
+  if(server_cert == NULL) {
+    printf(FMT_NO_VERIFY);
+    return FAIL;
+  }
+
+  // check format
+  if(SSL_get_verify_result(ssl) != X509_V_OK) {
+    printf(FMT_NO_VERIFY);
+    return FAIL;
+  }
+
+  
+  // check common name
+  char common_name[BUF_LEN];
+  char* name = X509_get_subject_name(server_cert); 
+  if(X509_NAME_get_text_by_NID(name, NID_commonName, common_name, BUF_LEN) == -1) {
+    printf(FMT_CN_MISMATCH);
+    return FAIL;
+  }
+  if(strcasecmp(common_name, COMMON_NAME)) {
+    printf(FMT_CN_MISMATCH);
+    return FAIL;
+  }
+
+  // check email
+  char email[BUF_LEN];
+  if(X509_NAME_get_text_by_NID(name, NID_pkcs9_emailAddress, email, BUF_LEN) == -1) {
+    printf(FMT_EMAIL_MISMATCH);
+    return FAIL;
+  }
+  if(strcasecmp(email, EMAIL)) {
+    printf(FMT_EMAIL_MISMATCH);
+    return FAIL;
+  }
+
+  // CA name
+  name = X509_get_issuer_name(server_cert);
+  char ca_name[BUF_LEN];
+  char ca_name = X509_NAME_get_text_by_NID(issuer_name, NID_commonName, ca_name, BUF_LEN);
+
+  printf(FMT_SERVER_INFO, common_name, email, ca_name);
+  return SUCCESS;
+
 }

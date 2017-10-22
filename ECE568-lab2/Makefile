@@ -12,12 +12,14 @@ targets := client server
 default: all
 all: $(targets)
 
-client: client.o
-	$(CC) -o client client.o $(LDFLAGS)
+client: client.o common.o
+	$(CC) -o client client.o common.o $(LDFLAGS)
 
-server: server.o
-	$(CC) -o server server.o $(LDFLAGS)
+server: server.o common.o
+	$(CC) -o server server.o common.o $(LDFLAGS)
 
+common.o: common.c
+	$(cc) $(CFLAGS) -c -o common.o common.c
 
 client.o: client.c
 	$(CC) $(CFLAGS) -c -o client.o client.c
