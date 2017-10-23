@@ -33,8 +33,9 @@
 #define COMMON_NAME "Bob’s Server"
 #define EMAIL "ece568bob@ecf.utoronto.ca"
 
-void exit_on_error(int sock, SSL_CTX* ctx);
+void shutdown(int sock, SSL_CTX* ctx);
 int check_cert(SSL* ssl);
+void transmit_and_receive(SSL* ssl, char* request);
 
 int main(int argc, char **argv)
 {
@@ -87,45 +88,51 @@ int main(int argc, char **argv)
     perror("connect");
   
   SSL_CTX* ctx = initialize_ctx(CERTIFICATE_FILE, PASS);
-  SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
+  SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2); // need to confirm with TA
   SSL_CTX_set_cipher_list(ctx, CIPHER_LIST);
 
-  SSL* ssl = SSL_new(ctx);
-  BIO* sbio = BIO_new_socket(sock, BIO_NOCLOSE);
-  SSL_set_bio(ssl,sbio,sbio);
+  SSL* ssl = SSL_new(ctx); // ssl object handle the channel/tunnel
+  BIO* sbio = BIO_new_socket(sock, BIO_NOCLOSE); // abstract socket connection into tunnel
+  SSL_set_bio(ssl,sbio,sbio); // bind
   
   if(SSL_connect(ssl)<=0) {
       printf(FMT_CONNECT_ERR);
       ERR_print_errors(bio_err);
-      exit_on_error(sock, ctx);
+      // need to confirm with TA
+      SSL_free(ssl);
+      destroy_ctx(ctx);
+      close(sock);
+      exit(0);
   }
-  if(check_cert(ssl) != SUCCESS) {
-    exit_on_error(sock, ctx);
+  if(check_cert(ssl) == SUCCESS) {
+    transmit_and_receive(ssl, secret);
   }
 
-  send(sock, secret, strlen(secret),0);
-  len = recv(sock, &buf, 255, 0);
-  buf[len]='\0';
+  shutdown(sock, ctx, ssl);
+  return 0;
+  // send(sock, secret, strlen(secret),0);
+  // len = recv(sock, &buf, 255, 0);
+  // buf[len]='\0';
   
   /* this is how you output something for the marker to pick up */
-  printf(FMT_OUTPUT, secret, buf);
+  // printf(FMT_OUTPUT, secret, buf);
   
-  close(sock);
-  return 1;
+  //close(sock);
+  //return 1;
 }
 
-void exit_on_error(int sock, SSL_CTX* ctx) {
+void shutdown(int sock, SSL_CTX* ctx, SSL* ssl) {
+  if(!SSL_shutdown(ssl)) {
+    // we are the 1st party notifying closure
+    SSL_shutdown(ssl);
+  }
+  SSL_free(ssl);
   destroy_ctx(ctx);
   close(sock);
-  exit(1);
+  exit(0);
 }
 
 int check_cert(SSL* ssl) {
-  X509* server_cert = SSL_get_peer_certificate(ssl);
-  if(server_cert == NULL) {
-    printf(FMT_NO_VERIFY);
-    return FAIL;
-  }
 
   // check format
   if(SSL_get_verify_result(ssl) != X509_V_OK) {
@@ -133,10 +140,15 @@ int check_cert(SSL* ssl) {
     return FAIL;
   }
 
+  X509* peer = SSL_get_peer_certificate(ssl);
+  if(peer == NULL) {
+    printf(FMT_NO_VERIFY);
+    return FAIL;
+  }
   
   // check common name
   char common_name[BUF_LEN];
-  char* name = X509_get_subject_name(server_cert); 
+  char* name = X509_get_subject_name(peer); 
   if(X509_NAME_get_text_by_NID(name, NID_commonName, common_name, BUF_LEN) == -1) {
     printf(FMT_CN_MISMATCH);
     return FAIL;
@@ -158,11 +170,52 @@ int check_cert(SSL* ssl) {
   }
 
   // CA name
-  name = X509_get_issuer_name(server_cert);
+  name = X509_get_issuer_name(peer);
   char ca_name[BUF_LEN];
   char ca_name = X509_NAME_get_text_by_NID(issuer_name, NID_commonName, ca_name, BUF_LEN);
 
   printf(FMT_SERVER_INFO, common_name, email, ca_name);
   return SUCCESS;
 
+}
+
+void transmit_and_receive(SSL* ssl, char* request) {
+  int request_len = strlen(request);
+  int rc;
+  char buf[BUF_LEN];
+
+  rc = SSL_write(ssl, buf, request_len);
+  switch(SSL_get_error(ssl, rc)) {
+    case SSL_ERROR_NONE:
+      if (rc != request_len) {
+        printf("Incomplete write!\n"); // confirm with TA
+      }
+      break;
+    case SSL_ERROR_SYSCALL:
+      printf(FMT_INCORRECT_CLOSE);
+      return;
+    default:
+      printf("Unknown error!\n");
+      return;
+  }
+
+  rc = SSL_read(ssl, buf, BUF_LEN);
+  switch(SSL_get_error(ssl, rc)) {
+    case SSL_ERROR_NONE:
+      buf[rc] = '\0'; // response may be less than buffer size
+      printf(FMT_OUTPUT, request, buf);
+      break;
+    case SSL_ERROR_ZERO_RETURN: // sock closed
+      break;
+    case SSL_ERROR_SYSCALL:
+      printf(FMT_INCORRECT_CLOSE);
+      break;
+    default:
+      printf("Unknown error!\n");
+      break;
+  }
+  return;
+  // int not_finished = 1;
+  // while(not_finished) {
+  // }
 }
