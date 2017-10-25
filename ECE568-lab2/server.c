@@ -7,6 +7,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include "common.h"
 
 #define PORT 8765
 
@@ -15,6 +16,18 @@
 #define FMT_CLIENT_INFO "ECE568-SERVER: %s %s\n"
 #define FMT_OUTPUT "ECE568-SERVER: %s %s\n"
 #define FMT_INCOMPLETE_CLOSE "ECE568-SERVER: Incomplete shutdown\n"
+
+// my macros
+#define CERTIFICATE_FILE "bob.pem"
+#define PASS "password"
+#define CIPHER_LIST "SSLv2:SSLv3:TLSv1"
+#define SUCCESS 0
+#define FAIL 1
+#define BUF_LEN 256
+
+void http_serve(SSL* ssl, int s);
+int check_cert(SSL* ssl);
+void shut_down(int sock, SSL_CTX* ctx, SSL* ssl);
 
 int main(int argc, char **argv)
 {
@@ -65,6 +78,12 @@ int main(int argc, char **argv)
     exit (0);
   } 
   
+  // create a shared context
+  SSL_CTX* ctx = initialize_ctx(CERTIFICATE_FILE, PASS);
+  if (SSL_CTX_set_cipher_list(ctx, CIPHER_LIST) == 0) {
+    printf("The OpenSSL installed does not support the ciphers in cipher list\n");
+  }
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_FAIL_IF_NO_PEER_CERT | SSL_VERIFY_CLIENT_ONCE | SSL_VERIFY_PEER, NULL);
   while(1){
     
     if((s=accept(sock, NULL, 0))<0){
@@ -81,6 +100,23 @@ int main(int argc, char **argv)
     }
     else {
       /*Child code*/
+      BIO* sbio = BIO_new_socket(s, BIO_NOCLOSE);
+      SSL* ssl = =SSL_new(ctx);
+      SSL_set_bio(ssl,sbio,sbio);
+
+      int rc = SSL_accept(ssl);
+      if (rc <= 0) {
+        printf(FMT_ACCEPT_ERR);
+        ERR_print_errors(bio_err);
+
+        SSL_free(ssl);
+        destroy_ctx(ctx);
+        close(s);
+        exit(0);
+      }
+
+      http_serve(ssl, s);
+
       int len;
       char buf[256];
       char *answer = "42";
@@ -97,4 +133,56 @@ int main(int argc, char **argv)
   
   close(sock);
   return 1;
+}
+
+void http_serve(SSL* ssl, int s) {
+  if (check_cert(ssl) == FAIL) {
+    return;
+  }
+}
+
+int check_cert(SSL* ssl) {
+  // check format
+  if(SSL_get_verify_result(ssl) != X509_V_OK) {
+    printf(FMT_ACCEPT_ERR);
+    ERR_print_errors(bio_err);
+    return FAIL;
+  }
+
+  // check if user presents a certificate
+  X509* peer = SSL_get_peer_certificate(ssl);
+  if(peer == NULL) {
+    printf(FMT_ACCEPT_ERR);
+    ERR_print_errors(bio_err);
+    return FAIL;
+  }
+
+  // get common name and email
+  char common_name[BUF_LEN];
+  char email[BUF_LEN];
+  X509_NAME*  name = X509_get_subject_name(peer);
+  if (X509_NAME_get_text_by_NID(name, NID_commonName, common_name, BUF_LEN) == -1) {
+    printf(FMT_ACCEPT_ERR);
+    ERR_print_errors(bio_err);
+    return FAIL;
+  }
+  if (X509_NAME_get_text_by_NID(name, NID_pkcs9_emailAddress, email, BUF_LEN) == -1) {
+    printf(FMT_ACCEPT_ERR);
+    ERR_print_errors(bio_err);
+    return FAIL;
+  }
+
+  printf(FMT_CLIENT_INFO, common_name, email);
+  return SUCCESS;
+}
+
+void shut_down(int sock, SSL_CTX* ctx, SSL* ssl) {
+  if(!SSL_shutdown(ssl)) {
+    // we are the 1st party notifying closure
+    SSL_shutdown(ssl);
+  }
+  SSL_free(ssl);
+  destroy_ctx(ctx);
+  close(sock);
+  exit(0);
 }
