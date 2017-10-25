@@ -33,17 +33,18 @@
 #define COMMON_NAME "Bob’s Server"
 #define EMAIL "ece568bob@ecf.utoronto.ca"
 
-void shutdown(int sock, SSL_CTX* ctx);
+void shut_down(int sock, SSL_CTX* ctx, SSL* ssl);
 int check_cert(SSL* ssl);
 void transmit_and_receive(SSL* ssl, char* request);
 
 int main(int argc, char **argv)
 {
-  int len, sock, port=PORT;
+  // int len, sock, port=PORT;
+  int sock, port=PORT;
   char *host=HOST;
   struct sockaddr_in addr;
   struct hostent *host_entry;
-  char buf[256];
+  // char buf[256];
   char *secret = "What's the question?";
   
   /*Parse command line arguments*/
@@ -55,8 +56,8 @@ int main(int argc, char **argv)
       host = argv[1];
       port=atoi(argv[2]);
       if (port<1||port>65535){
-	fprintf(stderr,"invalid port number");
-	exit(0);
+  fprintf(stderr,"invalid port number");
+  exit(0);
       }
       break;
     default:
@@ -108,7 +109,7 @@ int main(int argc, char **argv)
     transmit_and_receive(ssl, secret);
   }
 
-  shutdown(sock, ctx, ssl);
+  shut_down(sock, ctx, ssl);
   return 0;
   // send(sock, secret, strlen(secret),0);
   // len = recv(sock, &buf, 255, 0);
@@ -121,7 +122,7 @@ int main(int argc, char **argv)
   //return 1;
 }
 
-void shutdown(int sock, SSL_CTX* ctx, SSL* ssl) {
+void shut_down(int sock, SSL_CTX* ctx, SSL* ssl) {
   if(!SSL_shutdown(ssl)) {
     // we are the 1st party notifying closure
     SSL_shutdown(ssl);
@@ -148,7 +149,7 @@ int check_cert(SSL* ssl) {
   
   // check common name
   char common_name[BUF_LEN];
-  char* name = X509_get_subject_name(peer); 
+  X509_NAME* name = X509_get_subject_name(peer); 
   if(X509_NAME_get_text_by_NID(name, NID_commonName, common_name, BUF_LEN) == -1) {
     printf(FMT_CN_MISMATCH);
     return FAIL;
@@ -170,9 +171,9 @@ int check_cert(SSL* ssl) {
   }
 
   // CA name
-  name = X509_get_issuer_name(peer);
+  X509_NAME* issuer_name = X509_get_issuer_name(peer);
   char ca_name[BUF_LEN];
-  char ca_name = X509_NAME_get_text_by_NID(issuer_name, NID_commonName, ca_name, BUF_LEN);
+  X509_NAME_get_text_by_NID(issuer_name, NID_commonName, ca_name, BUF_LEN);
 
   printf(FMT_SERVER_INFO, common_name, email, ca_name);
   return SUCCESS;
