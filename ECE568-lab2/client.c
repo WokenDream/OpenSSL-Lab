@@ -30,7 +30,7 @@
 #define SUCCESS 0
 #define FAIL 1
 #define BUF_LEN 256
-#define COMMON_NAME "Bob’s Server"
+#define COMMON_NAME "Bob's Server"
 #define EMAIL "ece568bob@ecf.utoronto.ca"
 
 void shut_down(int sock, SSL_CTX* ctx, SSL* ssl);
@@ -185,7 +185,7 @@ void transmit_and_receive(SSL* ssl, char* request) {
   int len;
   char buf[BUF_LEN];
 
-  len = SSL_write(ssl, buf, request_len);
+  len = SSL_write(ssl, request, request_len);
   switch(SSL_get_error(ssl, len)) {
     case SSL_ERROR_NONE:
       if (len != request_len) {
@@ -216,7 +216,4 @@ void transmit_and_receive(SSL* ssl, char* request) {
       break;
   }
   return;
-  // int not_finished = 1;
-  // while(not_finished) {
-  // }
 }
