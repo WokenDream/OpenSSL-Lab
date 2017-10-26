@@ -103,7 +103,7 @@ int main(int argc, char **argv)
     else {
       /*Child code*/
       BIO* sbio = BIO_new_socket(s, BIO_NOCLOSE);
-      SSL* ssl = =SSL_new(ctx);
+      SSL* ssl = SSL_new(ctx);
       SSL_set_bio(ssl,sbio,sbio);
 
       int rc = SSL_accept(ssl);
