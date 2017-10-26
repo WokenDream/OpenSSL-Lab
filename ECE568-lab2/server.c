@@ -25,9 +25,9 @@
 #define FAIL 1
 #define BUF_LEN 256
 
-void http_serve(SSL* ssl, int s);
+void receive_and_transmit(SSL* ssl);
 int check_cert(SSL* ssl);
-void shut_down(int sock, SSL_CTX* ctx, SSL* ssl);
+void child_shut_down(int s, SSL* ssl);
 
 int main(int argc, char **argv)
 {
@@ -84,10 +84,12 @@ int main(int argc, char **argv)
     printf("The OpenSSL installed does not support the ciphers in cipher list\n");
   }
   SSL_CTX_set_verify(ctx, SSL_VERIFY_FAIL_IF_NO_PEER_CERT | SSL_VERIFY_CLIENT_ONCE | SSL_VERIFY_PEER, NULL);
+
   while(1){
     
     if((s=accept(sock, NULL, 0))<0){
       perror("accept");
+      destroy_ctx(ctx);
       close(sock);
       close(s);
       exit (0);
@@ -110,35 +112,73 @@ int main(int argc, char **argv)
         ERR_print_errors(bio_err);
 
         SSL_free(ssl);
-        destroy_ctx(ctx);
         close(s);
         exit(0);
       }
 
-      http_serve(ssl, s);
+      if (check_cert(ssl) == SUCCESS) {
+        receive_and_transmit(ssl);
+      }
+      child_shut_down(s, ssl);
+      // int len;
+      // char buf[256];
+      // char *answer = "42";
 
-      int len;
-      char buf[256];
-      char *answer = "42";
-
-      len = recv(s, &buf, 255, 0);
-      buf[len]= '\0';
-      printf(FMT_OUTPUT, buf, answer);
-      send(s, answer, strlen(answer), 0);
-      close(sock);
-      close(s);
+      // len = recv(s, &buf, 255, 0);
+      // buf[len]= '\0';
+      // printf(FMT_OUTPUT, buf, answer);
+      // send(s, answer, strlen(answer), 0);
+      // close(sock);
+      // close(s);
       return 0;
     }
   }
-  
+  destroy_ctx(ctx);
   close(sock);
   return 1;
 }
 
-void http_serve(SSL* ssl, int s) {
-  if (check_cert(ssl) == FAIL) {
-    return;
+void receive_and_transmit(SSL* ssl) {
+
+  int len;
+  char buf[BUF_LEN];
+  char *answer = "42";
+  int answer_len = strlen(answer);
+
+  len = SSL_read(ssl, buf, BUF_LEN);
+  buf[len] = '\0';
+
+  switch (SSL_get_error(ssl, len)) {
+    case SSL_ERROR_NONE:
+      printf(FMT_OUTPUT, buf, answer);
+      break;
+    case SSL_ERROR_ZERO_RETURN:
+      return; // sock closed
+    case SSL_ERROR_SYSCALL:
+      printf(FMT_INCOMPLETE_CLOSE);
+      return;
+    default:
+      printf("Some other read error!\n");
+      return;
   }
+
+  // send the answer to client
+  len = SSL_write(ssl, answer, answer_len);
+  switch (SSL_get_error(ssl, len)) {
+    case SSL_ERROR_NONE:
+      if (len != answer_len) {
+        printf("Incomplete write!\n");
+      }
+      break;
+    case SSL_ERROR_SYSCALL:
+      printf(FMT_INCOMPLETE_CLOSE);
+      break;
+    default:
+      printf("Some other write error!\n");
+      break;
+  }
+  return;
+
 }
 
 int check_cert(SSL* ssl) {
@@ -176,13 +216,12 @@ int check_cert(SSL* ssl) {
   return SUCCESS;
 }
 
-void shut_down(int sock, SSL_CTX* ctx, SSL* ssl) {
+void child_shut_down(int s, SSL* ssl) {
   if(!SSL_shutdown(ssl)) {
     // we are the 1st party notifying closure
     SSL_shutdown(ssl);
   }
   SSL_free(ssl);
-  destroy_ctx(ctx);
-  close(sock);
+  close(s);
   exit(0);
 }

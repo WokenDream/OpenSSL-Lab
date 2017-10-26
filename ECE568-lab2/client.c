@@ -147,7 +147,7 @@ int check_cert(SSL* ssl) {
     return FAIL;
   }
   
-  // check common name
+  // check common name first
   char common_name[BUF_LEN];
   X509_NAME* name = X509_get_subject_name(peer); 
   if(X509_NAME_get_text_by_NID(name, NID_commonName, common_name, BUF_LEN) == -1) {
@@ -182,14 +182,14 @@ int check_cert(SSL* ssl) {
 
 void transmit_and_receive(SSL* ssl, char* request) {
   int request_len = strlen(request);
-  int rc;
+  int len;
   char buf[BUF_LEN];
 
-  rc = SSL_write(ssl, buf, request_len);
-  switch(SSL_get_error(ssl, rc)) {
+  len = SSL_write(ssl, buf, request_len);
+  switch(SSL_get_error(ssl, len)) {
     case SSL_ERROR_NONE:
-      if (rc != request_len) {
-        printf("Incomplete write!\n"); // confirm with TA
+      if (len != request_len) {
+        printf("Incomplete write!\n");
       }
       break;
     case SSL_ERROR_SYSCALL:
@@ -200,15 +200,15 @@ void transmit_and_receive(SSL* ssl, char* request) {
       return;
   }
 
-  rc = SSL_read(ssl, buf, BUF_LEN);
-  switch(SSL_get_error(ssl, rc)) {
+  len = SSL_read(ssl, buf, BUF_LEN);
+  switch(SSL_get_error(ssl, len)) {
     case SSL_ERROR_NONE:
-      buf[rc] = '\0'; // response may be less than buffer size
+      buf[len] = '\0'; // response may be less than buffer size
       printf(FMT_OUTPUT, request, buf);
       break;
     case SSL_ERROR_ZERO_RETURN: // sock closed
       break;
-    case SSL_ERROR_SYSCALL:
+    case SSL_ERROR_SYSCALL: // premature close
       printf(FMT_INCORRECT_CLOSE);
       break;
     default:
